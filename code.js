@@ -1,10 +1,10 @@
-//===============================================================================
+//===================================================================================
 // [title]: Main script
 // [Description]: WFL Processing that operates on Google Apps (server side)
 // [file]: code.gs
 // [Development language]: GoogleApps Sctipt
 // [Update history]: 2019/07/12 Thawatchai R. (ITC Dept.)
-//===============================================================================
+//===================================================================================
 
 //#IMPORTANT CONFIGURATION WorkFlow LUANCHER ===============================================================================
 
@@ -376,6 +376,12 @@ var response = "";
      // read data from Sheet
      var test = ss1.getSheetByName(INPUT_DATA).getRange("A" + docPID+":CK"+docPID).getValues();
      var doc_name = test[0][0];
+
+     //------------- Preview PDF
+     var masPID = findRowSheet(test[0][3], test[0][1], "Master");//Som 20240318 Preview PDF
+     var master_sheet = ss1.getSheetByName("Master").getRange("A" + masPID + ":P" + masPID).getValues();//Som 20240318 Preview PDF
+     //-------------- END Preview PDF
+
      var com_type = test[0][1];
      var doc_type = test[0][3];  
      var doc_idi  = test[0][8]; 
@@ -515,6 +521,38 @@ var response = "";
 //Logger.log('Step 5');
         // Link Form Excel
         var link_url = doc_i.getUrl();
+       
+       //------------------ Preview PDF SOM20240318
+    var sheetCode = doc_i.getSheetByName(master_sheet[0][2]).getSheetId().toString();
+    var docRegister = test[0][21].toString().trim();
+    var pv = test[0][16].toString().trim();//ประธาน
+    var userLogin = Session.getEffectiveUser().getEmail().trim();
+    var matchRegister = docRegister.search(userLogin) >= 0 ? true : false;
+    var matchPv = pv.search(userLogin) >= 0 ? true : false;
+    var masterStatus = master_sheet[0][12].toString().trim().toUpperCase();
+    var masterScalePage = master_sheet[0][13].toString().trim().toUpperCase();
+    masterScalePage = masterScalePage != "1" || masterScalePage != "2" || masterScalePage != "3" || masterScalePage != "4" ? "2" : masterScalePage;
+    var docStatus = test[0][2].toString().toUpperCase();
+    var docSetting = "export?gid=" + sheetCode + "&format=pdf&portrait=true&size=a4&gridlines=false&printnotes=false&scale=" + masterScalePage;
+    var logTypeExport = "G-Sheet"
+    var docName = master_sheet[0][0].toString() + "_" + Utilities.formatDate(new Date(), "GMT+7", "yyyyMMddHHmmss");
+
+    if (docStatus == "Final Approved".toUpperCase()) 
+    {
+      if (((masterStatus == "PAU" && !matchRegister) || (masterStatus == "PUP") || (masterStatus == "PAG" && !matchRegister))) {
+        link_url = convertPDF(doc_i.getId(), docName, link_url, docSetting);
+        logTypeExport = "PDF";
+      }
+    }
+    else if (docStatus == "Registerd".toUpperCase()) {
+      if (((masterStatus == "PAU") || (masterStatus == "PUP") || (masterStatus == "PAG" && !matchRegister) || (masterStatus == "AAU" && !matchRegister) || (masterStatus == "AUP"))){
+        link_url = convertPDF(doc_i.getId(), docName, link_url, docSetting);
+        logTypeExport = "PDF";
+      }
+    } 
+       //------------------ END Preview PDF SOM20240318
+
+
         strHTML += "<div class=\"form_inp\"><a id =\"link_form\" onclick=\"enablebutton('" + link_url + "');\">" + doc_name + "</a></div></div>";
        //window.open($('#target_link').attr('href'), '_blank');
       //enablebutton();setTimeout(function()    {        window.location = $('link_form').get('href');    },1800);
@@ -1010,6 +1048,25 @@ function GetRow2UniID(pId){
   z = val.split('_');
   return z[0];
 }
+
+//------------------ Preview PDF SOM20240318
+function findRowSheet(pId1, pId2, sheetNames) {
+  var ss, val1, val2, wk1, wk2;
+
+  ss = SpreadsheetApp.openByUrl(DATA_SPREADSHEET);
+  val1 = ss.getSheetByName(sheetNames).getRange("A:A").getValues();
+  val2 = ss.getSheetByName(sheetNames).getRange("B:B").getValues();
+  for (var i = 0; i < val1.length; i++) {
+    wk1 = val1[i][0];
+    wk2 = val2[i][0];
+    if (wk1 == pId1 && wk2 == pId2) {
+      return i + 1;
+    }
+  }
+  return '';
+}
+
+//------------------ END Preview PDF SOM20240318
 
 function submitForm(e) {
     
@@ -3769,6 +3826,51 @@ function getScriptURL(urlText) {
   return urlText; //ScriptApp.getService().getUrl();
 }
 
+//------------------ Preview PDF SOM20240318
+function getScriptURL(urlText) {
+  urlText = "http://script.google.com/a/ngkntk-asia.com/macros/s/AKfycbz8Wg13Z88G9Y7eYd6o84ity3bCLGX-7x7jBrtnxg/dev?id=14678&fr=0&rt=3";
+  return urlText; //ScriptApp.getService().getUrl();
+}
+
+function getFileAsBlob(exportUrl) {
+  var response = UrlFetchApp.fetch(exportUrl, {
+    muteHttpExceptions: true,
+    headers: {
+      Authorization: 'Bearer ' + ScriptApp.getOAuthToken(),
+    },
+  });
+  return response.getBlob();
+}
+function convertPDF(doc_id, doc_name, doc_url, docSetting) {
+  try{
+  doc_url = doc_url.replace("edit", docSetting);
+  copyDataDbSheet(doc_id);
+  var blobPDF = getFileAsBlob(doc_url);
+  blobPDF.setName(doc_name);
+  var filePDF = DriveApp.createFile(blobPDF);
+  var folderPDF = DriveApp.getFolderById("1fjNwzeYp9vXZX7RltyQBWDmv3sqeL6hT");
+  filePDF.moveTo(folderPDF);
+
+  filePDF.setOwner("admin@ngkntk-asia.com");
+  filePDF.setShareableByEditors(true);
+
+  return filePDF.getUrl();
+  } catch (ex) {
+    //LogTit
+    console.error("Error At")
+    console.error(catchToString(ex))
+  }
+}
+
+function catchToString(err) {
+  var errInfo = "Catched something:\n";
+  for (var prop in err) {
+    errInfo += "  property: " + prop + "\n    value: [" + err[prop] + "]\n";
+  }
+  errInfo += "  toString(): " + " value: [" + err.toString() + "]";
+  return errInfo;
+}
+//------------------ END Preview PDF SOM20240318
 
 function abc(){
  var min = 1;
